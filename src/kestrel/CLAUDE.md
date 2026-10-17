@@ -159,6 +159,29 @@ here (H2C 0x1D is 11ac HalMAC; rtw89 has only `SCAN_OFFLOAD` + MCC). The
 dwell-1 / N-channel data plane (`examples/dwelltx`) runs on Kestrel at ~30 ms
 slots (soak: 2000 hops, zero wrong-channel, ~97 % delivery).
 
+The 8852C has one shortcut of its own, at 80 MHz on 5 GHz: a hop to another
+channel of the **same 80 MHz block** (149 <-> 161 in 149-161) moves no RF,
+only the primary. `fast_set_primary_80` rewrites what
+`halbb_ctrl_bw_ch_8852c` derives from the primary at 80 MHz — the
+0x4978[11:8] sub-band index and the 5 MHz edge mask (`halbb_5m_mask_8852c`,
+the 8852C's 0x4; the 8852D's 0x5 is not handled) — plus the MAC TX
+sub-carrier, then resets the BB: median **~2.2 ms** (max 2.5 ms, 115 hops)
+against **~213 ms** for the full path, which re-runs the IQK this one skips.
+Measured with an iPhone whose AWDL schedule alternates 149/161: on the full
+path its 49.5 MB transfer spent ~44 s of 49 s deaf; on this one a 50.8 MB
+transfer took 7.5 s with nothing else changed. With the IQK skipped, MAC
+retries stayed at 2-4% over those sessions — one adapter, one peer, near
+field — and the fast hop relies on the RF center staying put. Register
+parity against the full path (BB 0x0000-0xFFFF incl. the RF window, CMAC
+0xC000-0xCFFF; pairs 149/161, 149/153 and 157/161, 3 full tunes per primary
+and 12 fast hops each): every register the full path sets per primary —
+0x4978, 0x4c4c, 0x4d10, 0x4450, MAC 0xC088 — matched on all 36 hops. The
+rest that differed either differs between two full tunes of the same channel
+too (SW-SI counters and records, RX counters, an AFE status output, the
+NCTL/IQK engine's status) or showed on a single hop of six (MAC
+0xC5B0/0xC5B4, undocumented); a missing write would show on every hop. Any
+other 8852C wide-channel hop still takes the full path.
+
 ### Firmware IO-offload hop (`DEVOURER_KFR_OFLD`, default on)
 
 `fast_retune_ofld_8852b` ships the *entire* same-sub-band hop — the six RF18/

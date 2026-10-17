@@ -2694,6 +2694,31 @@ void HalKestrel::mac_set_bw_txsc(uint8_t channel, uint8_t center,
                   channel, center, rfmod, txsc);
 }
 
+void HalKestrel::fast_set_primary_80(uint8_t channel, uint8_t center) {
+  /* Move the primary 20 inside the 80 MHz block the RF already sits on: the
+   * halbb_ctrl_bw_ch_8852c pieces that read pri_ch at 80 MHz (0x4978[11:8]
+   * sub-band index + the 5 MHz edge mask, halbb_5m_mask_8852c) and the MAC
+   * TXSC, then a BB reset. No RF tune, no IQK -- the ~210 ms of the full
+   * path. */
+  const int d = int(channel) - int(center);
+  const uint8_t idx = static_cast<uint8_t>(d > 0 ? d / 2 : -d / 2 + 1);
+  bb_rmw(0x4978, 0xf00, idx);
+  const bool mask_en = idx == 3 || idx == 4, mask_low = idx == 4;
+  for (const uint32_t a : {0x4c4cu, 0x4d10u}) {
+    if (mask_en) {
+      bb_rmw(a, 0x3f, 0x4);
+      bb_rmw(a, 1u << 12, 1);
+      bb_rmw(a, 1u << 8, mask_low ? 0 : 1);
+      bb_rmw(a, 1u << 6, mask_low ? 1 : 0);
+    } else {
+      bb_rmw(a, 1u << 12, 0);
+    }
+  }
+  bb_rmw(0x4450, 1u << 24, mask_en ? 1 : 0);
+  mac_set_bw_txsc(channel, center, CHANNEL_WIDTH_80);
+  bb_reset_all();
+}
+
 bool HalKestrel::set_channel(uint8_t channel, ChannelWidth_t bw,
                              uint8_t offset, uint8_t band) {
   /* band: 0 = auto (2.4 GHz if ch<=14 else 5 GHz), 6 = 6 GHz. band_type is the
